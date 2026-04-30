@@ -1,7 +1,7 @@
 """Shared utilities for fetching dev.to articles and building the markdown report."""
 
 import os
-import anthropic
+import ollama
 import requests
 from datetime import datetime, timezone, timedelta
 
@@ -9,19 +9,22 @@ DEVTO_API = "https://dev.to/api"
 DAYS_BACK = 5
 TOP_N = 5
 
+OLLAMA_HOST = os.environ.get("OLLAMA_HOST", "http://localhost:11434")
+OLLAMA_MODEL = os.environ.get("OLLAMA_MODEL", "llama3.2")
+
 HEADERS = {
     "User-Agent": "devto-top-posts-scraper/1.0",
     "Accept": "application/json",
 }
 
-_anthropic_client: anthropic.Anthropic | None = None
+_ollama_client: ollama.Client | None = None
 
 
-def _claude() -> anthropic.Anthropic:
-    global _anthropic_client
-    if _anthropic_client is None:
-        _anthropic_client = anthropic.Anthropic()
-    return _anthropic_client
+def _ollama() -> ollama.Client:
+    global _ollama_client
+    if _ollama_client is None:
+        _ollama_client = ollama.Client(host=OLLAMA_HOST)
+    return _ollama_client
 
 
 def fetch_top_articles() -> list[dict]:
@@ -57,19 +60,22 @@ def fetch_article_body(article_id: int) -> str:
 
 
 def ai_summarize(title: str, body: str) -> str:
-    """Use Claude to generate a concise 2-3 sentence summary of an article."""
-    # Limit input to keep costs predictable
+    """Use a local Ollama model to generate a concise 2-3 sentence summary of an article."""
     excerpt = body[:5000]
-    response = _claude().messages.create(
-        model="claude-opus-4-7",
-        max_tokens=300,
-        system="You summarize technical blog posts in 2-3 concise sentences. Capture the core insight or takeaway. Write in present tense. Do not use phrases like 'This article' or 'The author'.",
-        messages=[{
-            "role": "user",
-            "content": f"Title: {title}\n\n{excerpt}",
-        }],
+    response = _ollama().chat(
+        model=OLLAMA_MODEL,
+        messages=[
+            {
+                "role": "system",
+                "content": "You summarize technical blog posts in 2-3 concise sentences. Capture the core insight or takeaway. Write in present tense. Do not use phrases like 'This article' or 'The author'.",
+            },
+            {
+                "role": "user",
+                "content": f"Title: {title}\n\n{excerpt}",
+            },
+        ],
     )
-    return next(b.text for b in response.content if b.type == "text").strip()
+    return response.message.content.strip()
 
 
 def build_markdown(articles: list[dict]) -> str:
